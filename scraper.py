@@ -5,6 +5,7 @@ import json
 import time
 import base64
 import argparse
+from io import BytesIO
 import requests
 import urllib3
 from bs4 import BeautifulSoup
@@ -22,6 +23,9 @@ from schema import (
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 load_dotenv()
+
+def clean_captcha_text(text):
+    return re.sub(r'[^a-zA-Z0-9]', '', text or '').strip()
 
 def get_groq_api_keys(api_key=None):
     keys = []
@@ -50,8 +54,11 @@ class CTRIScraper:
         self.workers = workers
         self.delay = delay
         self.groq_api_keys = get_groq_api_keys(api_key)
-        if not self.groq_api_keys:
-            raise ValueError("Set GROQ_API_KEY, GROQ_API_KEY_FALLBACK, GROQ_API_KEYS, or pass --api-key.")
+        self.captcha_solvers = [
+            solver.strip().lower()
+            for solver in os.environ.get("CAPTCHA_SOLVERS", "groq,tesseract,manual").split(",")
+            if solver.strip()
+        ]
         
         self.session = requests.Session()
         self.session.headers.update({
@@ -95,8 +102,79 @@ class CTRIScraper:
         except Exception as e:
             print(f"Warning: Failed to save progress: {e}")
 
+    def _solve_captcha_with_groq(self, base64_image):
+        if not self.groq_api_keys:
+            print("No Groq API keys configured; skipping Groq CAPTCHA solver.")
+            return None
+
+        last_error = None
+        for idx, groq_api_key in enumerate(self.groq_api_keys, start=1):
+            try:
+                client = Groq(api_key=groq_api_key)
+                response = client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "This is a CAPTCHA image. Please output ONLY the exact 6 characters visible in this image (letters and numbers, case sensitive), with no spaces, punctuation, explanation or other text."
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                )
+                captcha_text = clean_captcha_text(response.choices[0].message.content)
+                if captcha_text:
+                    print(f"Groq solved CAPTCHA with key {idx}/{len(self.groq_api_keys)}: '{captcha_text}'")
+                    return captcha_text
+            except Exception as e:
+                last_error = e
+                print(f"Groq key {idx}/{len(self.groq_api_keys)} failed: {e}")
+
+        print(f"All Groq API keys failed. Last error: {last_error}")
+        return None
+
+    def _solve_captcha_with_tesseract(self, captcha_bytes):
+        try:
+            from PIL import Image
+            import pytesseract
+
+            image = Image.open(BytesIO(captcha_bytes)).convert("L")
+            captcha_text = clean_captcha_text(
+                pytesseract.image_to_string(
+                    image,
+                    config="--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+                )
+            )
+            if captcha_text:
+                print(f"Tesseract solved CAPTCHA: '{captcha_text}'")
+                return captcha_text
+            print("Tesseract returned an empty CAPTCHA result.")
+        except Exception as e:
+            print(f"Tesseract CAPTCHA fallback failed: {e}")
+        return None
+
+    def _solve_captcha_manually(self):
+        if not sys.stdin.isatty():
+            print("Manual CAPTCHA fallback skipped because stdin is not interactive.")
+            return None
+
+        captcha_text = clean_captcha_text(input("Enter CAPTCHA text from the current CTRI image: "))
+        if captcha_text:
+            print("Manual CAPTCHA fallback received input.")
+            return captcha_text
+        return None
+
     def solve_captcha(self):
-        """Downloads CAPTCHA and uses Groq Vision API to solve it."""
+        """Downloads CAPTCHA and solves it with configured fallback solvers."""
         url_main = "https://ctri.nic.in/Clinicaltrials/advancesearchmain.php"
         url_captcha = "https://ctri.nic.in/Clinicaltrials/advancesearch.php?action=captcha"
         
@@ -122,45 +200,25 @@ class CTRIScraper:
         if r_captcha.status_code != 200:
             raise Exception(f"Failed to download captcha image: {r_captcha.status_code}")
             
-        # Base64 encode the CAPTCHA image
         base64_image = base64.b64encode(r_captcha.content).decode('utf-8')
-        
-        print("Calling Groq Vision API...")
-        last_error = None
-        for idx, groq_api_key in enumerate(self.groq_api_keys, start=1):
-            try:
-                client = Groq(api_key=groq_api_key)
-                response = client.chat.completions.create(
-                    model="meta-llama/llama-4-scout-17b-16e-instruct",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "This is a CAPTCHA image. Please output ONLY the exact 6 characters visible in this image (letters and numbers, case sensitive), with no spaces, punctuation, explanation or other text."
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{base64_image}"
-                                    }
-                                }
-                            ]
-                        }
-                    ]
-                )
+
+        captcha_text = None
+        for solver in self.captcha_solvers:
+            print(f"Trying CAPTCHA solver: {solver}")
+            if solver == "groq":
+                captcha_text = self._solve_captcha_with_groq(base64_image)
+            elif solver == "tesseract":
+                captcha_text = self._solve_captcha_with_tesseract(r_captcha.content)
+            elif solver == "manual":
+                captcha_text = self._solve_captcha_manually()
+            else:
+                print(f"Unknown CAPTCHA solver '{solver}', skipping.")
+
+            if captcha_text:
                 break
-            except Exception as e:
-                last_error = e
-                print(f"Groq key {idx}/{len(self.groq_api_keys)} failed: {e}")
-        else:
-            raise Exception(f"All Groq API keys failed. Last error: {last_error}")
-        
-        captcha_text = response.choices[0].message.content.strip()
-        # Clean any extra wrapper markdown/quotes if present
-        captcha_text = re.sub(r'[^a-zA-Z0-9]', '', captcha_text)
-        print(f"Groq solved CAPTCHA: '{captcha_text}'")
+
+        if not captcha_text:
+            raise Exception(f"Failed to solve CAPTCHA with configured solvers: {', '.join(self.captcha_solvers)}")
         
         return csrf_token, ncforminfo, captcha_text
 

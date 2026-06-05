@@ -5,7 +5,7 @@ Beta version gotcha: a lightweight Python scraper for the Clinical Trials Regist
 ## What this does
 
 - Searches the CTRI advanced-search form with a keyword, defaulting to `lung`.
-- Uses the Groq Vision API to read the CAPTCHA image required by CTRI.
+- Uses Groq Vision to read the CAPTCHA image required by CTRI, with optional Tesseract and manual fallbacks.
 - Extracts trial links from the CTRI result table.
 - Scrapes trial detail pages concurrently with configurable worker count and request delay.
 - Parses clinical-trial fields into a normalized schema in `schema.py`.
@@ -57,12 +57,14 @@ Then edit `.env` and set:
 ```text
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_API_KEY_FALLBACK=your_backup_groq_api_key_here
+CAPTCHA_SOLVERS=groq,tesseract,manual
 ZERVE_API_KEY=your_zerve_api_key_here
 TINYFISH_API_KEY=your_tinyfish_api_key_here
 FIRECRAWL_API_KEY=your_firecrawl_api_key_here
 ```
 
 For multiple Groq keys, either use `GROQ_API_KEY` plus `GROQ_API_KEY_FALLBACK`, or provide a comma-separated list in `GROQ_API_KEYS`.
+`CAPTCHA_SOLVERS` controls fallback order. The default is `groq,tesseract,manual`.
 
 If you plan to use Playwright-based extensions, install browser binaries:
 
@@ -124,9 +126,16 @@ The current scraper uses Groq for CAPTCHA solving. Zerve AI, Tinyfish AI, and Fi
 | `GROQ_API_KEY` | yes | Primary Groq key for CAPTCHA image solving. |
 | `GROQ_API_KEY_FALLBACK` | yes | Backup Groq key if the primary fails. |
 | `GROQ_API_KEYS` | yes | Optional comma-separated Groq key list. |
+| `CAPTCHA_SOLVERS` | yes | Ordered CAPTCHA fallback list: `groq`, `tesseract`, `manual`. |
 | `ZERVE_API_KEY` | reserved | Zerve AI integration key. |
 | `TINYFISH_API_KEY` | reserved | Tinyfish AI integration key. |
 | `FIRECRAWL_API_KEY` | reserved | Firecrawl integration key. |
+
+CAPTCHA fallback behavior:
+
+- `groq` tries every configured Groq key in order.
+- `tesseract` uses local OCR through `pytesseract`; install the Tesseract executable separately and ensure it is on PATH.
+- `manual` prompts for typed CAPTCHA text only when the script is run from an interactive terminal.
 
 ## Output format
 
