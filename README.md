@@ -22,14 +22,15 @@ Beta version gotcha: a lightweight Python scraper for the Clinical Trials Regist
 | `split_results.py` | Utility that splits `ctri_results.json` into per-record JSON files. |
 | `test_scraper.py` | End-to-end smoke test that runs a small scrape and validates the output shape. |
 | `requirements.txt` | Python dependency pins for scraping, parsing, OCR/browser tooling, async utilities, and Groq. |
-| `.env.example` | Template for local Groq API key configuration. |
+| `.env.example` | Template for local provider API key configuration. |
 
-Generated runtime files such as `.env`, `ctri_results.json`, `ctri_progress.json`, `test_results.json`, and `results/` are ignored by git.
+Generated runtime files such as `.env`, `ctri_results.json`, `ctri_progress.json`, `test_results.json`, `results/`, and `results_ctri/` are ignored by git.
 
 ## Requirements
 
 - Python 3.10 or newer.
 - A Groq API key with access to the configured vision/chat model.
+- Optional API keys for Zerve AI, Tinyfish AI, and Firecrawl if you extend the scraper with those providers.
 - Internet access to `https://ctri.nic.in`.
 - Optional: Tesseract OCR installed locally if you extend the OCR path through `pytesseract`.
 - Optional: Playwright browsers if you add browser-driven scraping flows.
@@ -55,7 +56,13 @@ Then edit `.env` and set:
 
 ```text
 GROQ_API_KEY=your_groq_api_key_here
+GROQ_API_KEY_FALLBACK=your_backup_groq_api_key_here
+ZERVE_API_KEY=your_zerve_api_key_here
+TINYFISH_API_KEY=your_tinyfish_api_key_here
+FIRECRAWL_API_KEY=your_firecrawl_api_key_here
 ```
+
+For multiple Groq keys, either use `GROQ_API_KEY` plus `GROQ_API_KEY_FALLBACK`, or provide a comma-separated list in `GROQ_API_KEYS`.
 
 If you plan to use Playwright-based extensions, install browser binaries:
 
@@ -107,6 +114,19 @@ python scraper.py --api-key "your_groq_api_key_here"
 | `--delay` | `0.5` | Delay before each detail request. |
 | `--api-key` | environment / `.env` | Groq API key override. |
 | `--no-resume` | off | Deletes the progress file before starting. |
+
+## Provider configuration
+
+The current scraper uses Groq for CAPTCHA solving. Zerve AI, Tinyfish AI, and Firecrawl keys are reserved in `.env.example` for provider-specific extensions, orchestration, or alternate extraction flows.
+
+| Environment variable | Used now | Purpose |
+| --- | --- | --- |
+| `GROQ_API_KEY` | yes | Primary Groq key for CAPTCHA image solving. |
+| `GROQ_API_KEY_FALLBACK` | yes | Backup Groq key if the primary fails. |
+| `GROQ_API_KEYS` | yes | Optional comma-separated Groq key list. |
+| `ZERVE_API_KEY` | reserved | Zerve AI integration key. |
+| `TINYFISH_API_KEY` | reserved | Tinyfish AI integration key. |
+| `FIRECRAWL_API_KEY` | reserved | Firecrawl integration key. |
 
 ## Output format
 

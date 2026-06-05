@@ -23,6 +23,23 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 load_dotenv()
 
+def get_groq_api_keys(api_key=None):
+    keys = []
+    for value in [
+        api_key,
+        os.environ.get("GROQ_API_KEY"),
+        os.environ.get("GROQ_API_KEY_FALLBACK"),
+    ]:
+        if value and value not in keys:
+            keys.append(value)
+
+    for value in os.environ.get("GROQ_API_KEYS", "").split(","):
+        value = value.strip()
+        if value and value not in keys:
+            keys.append(value)
+
+    return keys
+
 class CTRIScraper:
     def __init__(self, keyword="lung", max_records=None, output_file="ctri_results.json",
                  progress_file="ctri_progress.json", workers=5, delay=0.5, api_key=None):
@@ -32,9 +49,9 @@ class CTRIScraper:
         self.progress_file = progress_file
         self.workers = workers
         self.delay = delay
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY")
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY must be set in the environment, .env, or passed with --api-key.")
+        self.groq_api_keys = get_groq_api_keys(api_key)
+        if not self.groq_api_keys:
+            raise ValueError("Set GROQ_API_KEY, GROQ_API_KEY_FALLBACK, GROQ_API_KEYS, or pass --api-key.")
         
         self.session = requests.Session()
         self.session.headers.update({
@@ -109,28 +126,36 @@ class CTRIScraper:
         base64_image = base64.b64encode(r_captcha.content).decode('utf-8')
         
         print("Calling Groq Vision API...")
-        client = Groq(api_key=self.api_key)
-        
-        response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
+        last_error = None
+        for idx, groq_api_key in enumerate(self.groq_api_keys, start=1):
+            try:
+                client = Groq(api_key=groq_api_key)
+                response = client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=[
                         {
-                            "type": "text",
-                            "text": "This is a CAPTCHA image. Please output ONLY the exact 6 characters visible in this image (letters and numbers, case sensitive), with no spaces, punctuation, explanation or other text."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            }
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "This is a CAPTCHA image. Please output ONLY the exact 6 characters visible in this image (letters and numbers, case sensitive), with no spaces, punctuation, explanation or other text."
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{base64_image}"
+                                    }
+                                }
+                            ]
                         }
                     ]
-                }
-            ]
-        )
+                )
+                break
+            except Exception as e:
+                last_error = e
+                print(f"Groq key {idx}/{len(self.groq_api_keys)} failed: {e}")
+        else:
+            raise Exception(f"All Groq API keys failed. Last error: {last_error}")
         
         captcha_text = response.choices[0].message.content.strip()
         # Clean any extra wrapper markdown/quotes if present
