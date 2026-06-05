@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local scraper outputs/checkpoints
+ctri_results.json
+ctri_progress.json
+test_progress.json
+test_results.json
+results/
